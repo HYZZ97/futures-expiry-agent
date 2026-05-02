@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Futures Expiry Workflow Agent</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --surface2: #161b22;
+    --border: #21262d;
+    --green: #3fb950;
+    --green-dim: #1a3d20;
+    --red: #f85149;
+    --red-dim: #3d1a1a;
+    --yellow: #d29922;
+    --yellow-dim: #3d2e0a;
+    --blue: #388bfd;
+    --blue-dim: #0d2149;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --text-muted: #484f58;
+    --accent: #58a6ff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* HEADER */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    color: var(--accent);
+    letter-spacing: -0.5px;
+  }
+
+  .logo span { color: var(--text-dim); font-weight: 400; }
+
+  .header-meta {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+  }
+
+  .date-badge {
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--surface2);
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* MAIN LAYOUT */
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 32px;
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    gap: 20px;
+  }
+
+  /* PANELS */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface2);
+  }
+
+  .panel-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+  }
+
+  .panel-body { padding: 16px; }
+
+  /* CONTRACT TABLE */
+  .contracts-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+
+  .contracts-table th {
+    text-align: left;
+    color: var(--text-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+  }
+
+  .contracts-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  .contracts-table tr:last-child td { border-bottom: none; }
+
+  .contracts-table tr:hover td { background: var(--surface2); }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .status-active { background: var(--green-dim); color: var(--green); }
+  .status-inactive { background: var(--border); color: var(--text-muted); }
+  .status-expiring { background: var(--yellow-dim); color: var(--yellow); }
+
+  .asset-chip {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    background: var(--blue-dim);
+    color: var(--blue);
+    letter-spacing: 0.5px;
+  }
+
+  .asset-energy { background: #2d1f0a; color: #e3951c; }
+  .asset-index { background: #0d2149; color: #58a6ff; }
+  .asset-commodity { background: #1a2e1a; color: #56d364; }
+  .asset-fx { background: #2d0a2e; color: #d2a8ff; }
+
+  /* MARGIN TIERS */
+  .tier-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    font-size: 11px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .tier-row.orphaned {
+    border-color: var(--red);
+    background: var(--red-dim);
+  }
+
+  .tier-row.deleting {
+    animation: slideOut 0.4s ease forwards;
+  }
+
+  @keyframes slideOut {
+    to { opacity: 0; transform: translateX(20px); height: 0; padding: 0; margin: 0; border: none; }
+  }
+
+  .tier-client {
+    color: var(--accent);
+    font-weight: 500;
+    min-width: 90px;
+  }
+
+  .tier-contract { color: var(--text-dim); min-width: 80px; }
+  .tier-margin { color: var(--text); margin-left: auto; }
+
+  .orphan-tag {
+    background: var(--red);
+    color: white;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  /* WORKFLOW STEPS */
+  .workflow-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .step {
+    display: flex;
+    gap: 12px;
+    padding: 12px 16px;
+    position: relative;
+    transition: all 0.3s ease;
+  }
+
+  .step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 27px;
+    top: 44px;
+    width: 1px;
+    height: calc(100% - 20px);
+    background: var(--border);
+  }
+
+  .step.completed::after { background: var(--green); opacity: 0.4; }
+  .step.failed::after { background: var(--red); opacity: 0.4; }
+
+  .step-icon {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 2px;
+    border: 2px solid var(--border);
+    background: var(--surface2);
+    color: var(--text-muted);
+    transition: all 0.3s ease;
+    z-index: 1;
+  }
+
+  .step.running .step-icon {
+    border-color: var(--blue);
+    color: var(--blue);
+    animation: spin 1s linear infinite;
+  }
+
+  .step.completed .step-icon {
+    border-color: var(--green);
+    background: var(--green-dim);
+    color: var(--green);
+  }
+
+  .step.failed .step-icon {
+    border-color: var(--red);
+    background: var(--red-dim);
+    color: var(--red);
+  }
+
+  .step.halted .step-icon {
+    border-color: var(--yellow);
+    background: var(--yellow-dim);
+    color: var(--yellow);
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .step-content { flex: 1; }
+  .step-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+
+  .step.running .step-name { color: var(--blue); }
+  .step.completed .step-name { color: var(--green); }
+  .step.failed .step-name { color: var(--red); }
+
+  .step-desc {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .step-result {
+    font-size: 10px;
+    margin-top: 4px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    display: none;
+  }
+
+  .step-result.show { display: block; }
+  .step-result.ok { background: var(--green-dim); color: var(--green); }
+  .step-result.err { background: var(--red-dim); color: var(--red); }
+  .step-result.warn { background: var(--yellow-dim); color: var(--yellow); }
+  .step-result.info { background: var(--blue-dim); color: var(--blue); }
+
+  /* BUTTONS */
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    padding: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .btn {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 6px;
+    border: 1px solid;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  .btn-green {
+    background: var(--green-dim);
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .btn-green:hover:not(:disabled) { background: #1f4d26; }
+
+  .btn-red {
+    background: var(--red-dim);
+    border-color: var(--red);
+    color: var(--red);
+  }
+  .btn-red:hover:not(:disabled) { background: #4d1f1f; }
+
+  .btn-reset {
+    background: var(--surface2);
+    border-color: var(--border);
+    color: var(--text-dim);
+  }
+
+  /* LOG */
+  .log-area {
+    font-size: 11px;
+    line-height: 1.8;
+    padding: 12px 16px;
+    min-height: 120px;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  .log-line { display: flex; gap: 8px; }
+  .log-time { color: var(--text-muted); flex-shrink: 0; }
+  .log-msg { color: var(--text-dim); }
+  .log-msg.ok { color: var(--green); }
+  .log-msg.err { color: var(--red); }
+  .log-msg.warn { color: var(--yellow); }
+  .log-msg.info { color: var(--blue); }
+  .log-msg.system { color: var(--accent); }
+
+  /* SUMMARY */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 16px;
+  }
+
+  .summary-stat {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    text-align: center;
+  }
+
+  .stat-val {
+    font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .stat-val.green { color: var(--green); }
+  .stat-val.red { color: var(--red); }
+
+  /* ALERT */
+  .alert {
+    margin: 12px 16px;
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1.6;
+    display: none;
+  }
+  .alert.show { display: block; }
+  .alert.danger {
+    background: var(--red-dim);
+    border: 1px solid var(--red);
+    color: #ff8a80;
+  }
+  .alert.success {
+    background: var(--green-dim);
+    border: 1px solid var(--green);
+    color: #80ffb0;
+  }
+
+  /* SCROLLBAR */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--surface); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* TOOLTIP for design note */
+  .design-note {
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 8px 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .tag { 
+    background: var(--surface2); 
+    border: 1px solid var(--border); 
+    border-radius: 3px; 
+    padding: 1px 5px; 
+    font-size: 9px; 
+    color: var(--text-muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">FuturesOps<span>.agent</span></div>
+  <div class="header-meta">
+    <div class="date-badge" id="currentDate"></div>
+    <div class="status-dot"></div>
+  </div>
+</header>
+
+<div class="container">
+  <!-- LEFT COLUMN -->
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+
+    <!-- CONTRACTS TABLE -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Futures Contracts — Live Database</span>
+        <span style="font-size:10px; color: var(--text-muted);" id="contractCount"></span>
+      </div>
+      <table class="contracts-table">
+        <thead>
+          <tr>
+            <th>Contract</th>
+            <th>Asset Class</th>
+            <th>Symbol</th>
+            <th>Expiry</th>
+            <th>Init. Margin</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="contractsBody"></tbody>
+      </table>
+    </div>
+
+    <!-- MARGIN TIERS -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Client Margin Tier Records</span>
+        <span style="font-size:10px; color: var(--text-muted);" id="tierCount"></span>
+      </div>
+      <div class="panel-body" id="tiersBody" style="max-height: 240px; overflow-y: auto;"></div>
+      <div class="design-note">
+        <span class="tag">VALIDATION GATE</span>
+        Orphaned records (inactive contracts with margin tiers) will trigger pipeline halt
+      </div>
+    </div>
+
+    <!-- LOG -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Execution Log</span>
+        <span style="font-size:10px; color: var(--green); cursor:pointer;" onclick="clearLog()">CLEAR</span>
+      </div>
+      <div class="log-area" id="logArea"></div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+
+    <!-- WORKFLOW -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Agent Workflow</span>
+        <span class="tag" id="workflowStatus">IDLE</span>
+      </div>
+
+      <div class="workflow-steps" id="workflowSteps"></div>
+
+      <div id="alertBox" class="alert"></div>
+
+      <div class="btn-row">
+        <button class="btn btn-green" id="btnClean" onclick="runWorkflow(false)">▶ Run Clean</button>
+        <button class="btn btn-red" id="btnBug" onclick="runWorkflow(true)">⚠ Inject Bug</button>
+        <button class="btn btn-reset" onclick="resetAll()">↺ Reset</button>
+      </div>
+    </div>
+
+    <!-- SUMMARY -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Session Summary</span>
+      </div>
+      <div class="summary-grid">
+        <div class="summary-stat">
+          <div class="stat-val green" id="statDeactivated">—</div>
+          <div class="stat-label">Deactivated</div>
+        </div>
+        <div class="summary-stat">
+          <div class="stat-val" id="statTiersCleaned">—</div>
+          <div class="stat-label">Tiers Cleaned</div>
+        </div>
+        <div class="summary-stat">
+          <div class="stat-val" id="statActive">—</div>
+          <div class="stat-label">Active Contracts</div>
+        </div>
+        <div class="summary-stat">
+          <div class="stat-val" id="statSyncStatus">—</div>
+          <div class="stat-label">Sync Status</div>
+        </div>
+      </div>
+      <div style="padding: 0 16px 12px; font-size: 10px; color: var(--text-muted); line-height: 1.7;">
+        <strong style="color: var(--text-dim); display: block; margin-bottom: 4px;">Design Principle</strong>
+        Dependency chain, not checklist. Each step runs only after the previous passes validation.
+        Deactivation and margin tier cleanup happen atomically — no orphaned records can reach the front-end.
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ─── DATA ────────────────────────────────────────────────────────────────────
+
+const today = new Date();
+const todayStr = today.toISOString().split('T')[0];
+const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+const yesterdayStr = yesterday.toISOString().split('T')[0];
+const plus15 = new Date(today); plus15.setDate(today.getDate() + 15);
+const plus30 = new Date(today); plus30.setDate(today.getDate() + 30);
+const plus60 = new Date(today); plus60.setDate(today.getDate() + 60);
+const plus90 = new Date(today); plus90.setDate(today.getDate() + 90);
+const minus90 = new Date(today); minus90.setDate(today.getDate() - 90);
+const minus120 = new Date(today); minus120.setDate(today.getDate() - 120);
+
+const fmt = d => d.toISOString().split('T')[0];
+
+const INITIAL_CONTRACTS = [
+  { id: 'ES-JUN26',  symbol: 'ES',  asset: 'index',     name: 'S&P 500 Futures',      expiry: fmt(plus60),  margin: 12500, status: 'active' },
+  { id: 'NQ-JUN26',  symbol: 'NQ',  asset: 'index',     name: 'NASDAQ-100 Futures',   expiry: fmt(plus60),  margin: 18500, status: 'active' },
+  { id: 'ES-MAR26',  symbol: 'ES',  asset: 'index',     name: 'S&P 500 Futures',      expiry: yesterdayStr, margin: 12000, status: 'active' },
+  { id: 'NQ-MAR26',  symbol: 'NQ',  asset: 'index',     name: 'NASDAQ-100 Futures',   expiry: yesterdayStr, margin: 18000, status: 'active' },
+  { id: 'CL-JUN26',  symbol: 'CL',  asset: 'energy',    name: 'Crude Oil Futures',    expiry: fmt(plus30),  margin: 8000,  status: 'active' },
+  { id: 'GC-JUN26',  symbol: 'GC',  asset: 'commodity', name: 'Gold Futures',         expiry: fmt(plus90),  margin: 9500,  status: 'active' },
+  { id: 'ZW-MAY26',  symbol: 'ZW',  asset: 'commodity', name: 'Wheat Futures',        expiry: fmt(plus15),  margin: 3200,  status: 'active' },
+  { id: 'EUR-JUN26', symbol: 'EUR', asset: 'fx',        name: 'EUR/USD Futures',      expiry: fmt(plus60),  margin: 2800,  status: 'active' },
+  { id: 'ES-DEC25',  symbol: 'ES',  asset: 'index',     name: 'S&P 500 Futures',      expiry: fmt(minus90), margin: 11000, status: 'inactive' },
+  { id: 'CL-DEC25',  symbol: 'CL',  asset: 'energy',    name: 'Crude Oil Futures',    expiry: fmt(minus120),margin: 7500,  status: 'inactive' },
+];
+
+const INITIAL_TIERS = [
+  { id: 1,  client: 'CLIENT_001', contractId: 'ES-MAR26',  rate: 10000 },
+  { id: 2,  client: 'CLIENT_002', contractId: 'ES-MAR26',  rate: 11000 },
+  { id: 3,  client: 'CLIENT_003', contractId: 'ES-MAR26',  rate: 10500 },
+  { id: 4,  client: 'CLIENT_001', contractId: 'NQ-MAR26',  rate: 16000 },
+  { id: 5,  client: 'CLIENT_002', contractId: 'NQ-MAR26',  rate: 17000 },
+  { id: 6,  client: 'CLIENT_001', contractId: 'ES-JUN26',  rate: 12500 },
+  { id: 7,  client: 'CLIENT_002', contractId: 'ES-JUN26',  rate: 12000 },
+  { id: 8,  client: 'CLIENT_001', contractId: 'CL-JUN26',  rate: 7500  },
+  { id: 9,  client: 'CLIENT_001', contractId: 'GC-JUN26',  rate: 9000  },
+  { id: 10, client: 'CLIENT_003', contractId: 'ZW-MAY26',  rate: 3000  },
+  { id: 11, client: 'CLIENT_001', contractId: 'EUR-JUN26', rate: 2600  },
+];
+
+const BUG_TIERS = [
+  { id: 12, client: 'CLIENT_001', contractId: 'ES-DEC25', rate: 9500,  orphan: true },
+  { id: 13, client: 'CLIENT_002', contractId: 'ES-DEC25', rate: 10000, orphan: true },
+  { id: 14, client: 'CLIENT_001', contractId: 'CL-DEC25', rate: 7000,  orphan: true },
+];
+
+const STEPS = [
+  { key: 's1', name: 'Query Expiring Contracts',     desc: 'SQL: SELECT contracts WHERE expiry ≤ today AND status = active' },
+  { key: 's2', name: 'Validation Gate — Margin Tiers', desc: 'CHECK: orphaned margin tier records for inactive contracts' },
+  { key: 's3', name: 'Notify Trading Desk',           desc: 'EMAIL: expiry alert → trading-desk@optiver.com' },
+  { key: 's4', name: 'Deactivate + Cascade Clean',    desc: 'UPDATE contracts SET inactive; DELETE margin_tiers (cascade)' },
+  { key: 's5', name: 'Post-Deactivation Validation',  desc: 'VERIFY: no stale records remain before front-end sync' },
+];
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+
+let contracts = JSON.parse(JSON.stringify(INITIAL_CONTRACTS));
+let tiers = JSON.parse(JSON.stringify(INITIAL_TIERS));
+let running = false;
+
+// ─── INIT ────────────────────────────────────────────────────────────────────
+
+document.getElementById('currentDate').textContent = todayStr;
+
+function init() {
+  renderContracts();
+  renderTiers();
+  renderSteps();
+  updateCounts();
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+
+function assetLabel(asset) {
+  const map = { index: 'Index', energy: 'Energy', commodity: 'Commodity', fx: 'FX' };
+  return map[asset] || asset;
+}
+
+function renderContracts() {
+  const tbody = document.getElementById('contractsBody');
+  tbody.innerHTML = '';
+  contracts.forEach(c => {
+    const isExpiring = c.expiry <= todayStr && c.status === 'active';
+    const statusClass = c.status === 'inactive' ? 'status-inactive' : isExpiring ? 'status-expiring' : 'status-active';
+    const statusText = c.status === 'inactive' ? '⬤ Inactive' : isExpiring ? '⚠ Expired' : '⬤ Active';
+    tbody.innerHTML += `
+      <tr id="row-${c.id}">
+        <td><strong style="color:var(--text)">${c.id}</strong><br><span style="font-size:9px;color:var(--text-muted)">${c.name}</span></td>
+        <td><span class="asset-chip asset-${c.asset}">${assetLabel(c.asset)}</span></td>
+        <td style="color:var(--accent)">${c.symbol}</td>
+        <td style="${isExpiring && c.status==='active' ? 'color:var(--yellow)' : ''}">${c.expiry}</td>
+        <td style="color:var(--text-dim)">$${c.margin.toLocaleString()}</td>
+        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+      </tr>`;
+  });
+}
+
+function renderTiers() {
+  const body = document.getElementById('tiersBody');
+  body.innerHTML = '';
+  if (tiers.length === 0) {
+    body.innerHTML = '<div style="color:var(--text-muted);font-size:11px;padding:8px">No margin tier records</div>';
+    return;
+  }
+  tiers.forEach(t => {
+    const contract = contracts.find(c => c.id === t.contractId);
+    const isOrphan = t.orphan || (contract && contract.status === 'inactive');
+    body.innerHTML += `
+      <div class="tier-row ${isOrphan ? 'orphaned' : ''}" id="tier-${t.id}">
+        <span class="tier-client">${t.client}</span>
+        <span class="tier-contract">${t.contractId}</span>
+        <span style="font-size:9px;color:var(--text-muted)">${contract ? assetLabel(contract.asset) : ''}</span>
+        <span class="tier-margin">$${t.rate.toLocaleString()}</span>
+        ${isOrphan ? '<span class="orphan-tag">ORPHANED</span>' : ''}
+      </div>`;
+  });
+}
+
+function renderSteps(states = {}) {
+  const container = document.getElementById('workflowSteps');
+  container.innerHTML = '';
+  STEPS.forEach(s => {
+    const state = states[s.key] || 'idle';
+    const icons = { idle: s.key.replace('s',''), running: '◌', completed: '✓', failed: '✗', halted: '⚠' };
+    const result = states[s.key + '_result'];
+    container.innerHTML += `
+      <div class="step ${state}" id="step-${s.key}">
+        <div class="step-icon">${icons[state] || s.key.replace('s','')}</div>
+        <div class="step-content">
+          <div class="step-name">${s.name}</div>
+          <div class="step-desc">${s.desc}</div>
+          ${result ? `<div class="step-result show ${result.type}">${result.msg}</div>` : ''}
+        </div>
+      </div>`;
+  });
+}
+
+function updateCounts() {
+  const active = contracts.filter(c => c.status === 'active').length;
+  document.getElementById('contractCount').textContent = `${contracts.length} contracts · ${active} active`;
+  document.getElementById('tierCount').textContent = `${tiers.length} records`;
+}
+
+// ─── LOG ─────────────────────────────────────────────────────────────────────
+
+function log(msg, type = '') {
+  const area = document.getElementById('logArea');
+  const time = new Date().toTimeString().split(' ')[0];
+  area.innerHTML += `<div class="log-line"><span class="log-time">${time}</span><span class="log-msg ${type}">${msg}</span></div>`;
+  area.scrollTop = area.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('logArea').innerHTML = '';
+}
+
+// ─── WORKFLOW ────────────────────────────────────────────────────────────────
+
+function setButtons(disabled) {
+  document.getElementById('btnClean').disabled = disabled;
+  document.getElementById('btnBug').disabled = disabled;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function runWorkflow(injectBug) {
+  if (running) return;
+  running = true;
+  setButtons(true);
+
+  // Reset state
+  contracts = JSON.parse(JSON.stringify(INITIAL_CONTRACTS));
+  tiers = JSON.parse(JSON.stringify(INITIAL_TIERS));
+
+  if (injectBug) {
+    tiers = [...tiers, ...BUG_TIERS];
+    log('⚠ BUG INJECTED: ES-DEC25 and CL-DEC25 have orphaned margin tier records', 'warn');
+  }
+
+  renderContracts();
+  renderTiers();
+  updateCounts();
+  setAlert('', '');
+
+  const states = {};
+  const setWorkflowStatus = s => {
+    document.getElementById('workflowStatus').textContent = s;
+  };
+
+  setWorkflowStatus('RUNNING');
+
+  // Helper
+  const setStep = (key, state, result) => {
+    states[key] = state;
+    if (result) states[key + '_result'] = result;
+    renderSteps(states);
+  };
+
+  log('─── Workflow started ───', 'system');
+
+  // STEP 1
+  await sleep(600);
+  setStep('s1', 'running');
+  log('Step 1: Querying expiring contracts...', 'info');
+  await sleep(800);
+
+  const expiring = contracts.filter(c => c.expiry <= todayStr && c.status === 'active');
+  if (expiring.length === 0) {
+    setStep('s1', 'completed', { type: 'ok', msg: 'No contracts expiring today.' });
+    log('No expiring contracts. Workflow complete.', 'ok');
+    setWorkflowStatus('COMPLETE');
+    running = false; setButtons(false);
+    return;
+  }
+
+  setStep('s1', 'completed', { type: 'ok', msg: `Found ${expiring.length} expiring: ${expiring.map(c=>c.id).join(', ')}` });
+  log(`Found ${expiring.length} expiring contract(s): ${expiring.map(c=>c.id).join(', ')}`, 'ok');
+
+  // STEP 2 — VALIDATION GATE
+  await sleep(600);
+  setStep('s2', 'running');
+  log('Step 2: VALIDATION GATE — checking for orphaned margin tier records...', 'info');
+  await sleep(900);
+
+  const orphans = tiers.filter(t => {
+    const c = contracts.find(x => x.id === t.contractId);
+    return c && c.status === 'inactive';
+  });
+
+  if (orphans.length > 0) {
+    setStep('s2', 'failed', { type: 'err', msg: `FAIL: ${orphans.length} orphaned record(s) detected. Pipeline halted.` });
+    log(`❌ VALIDATION FAILED: ${orphans.length} orphaned margin tier record(s) found`, 'err');
+    orphans.forEach(o => log(`   tier_id=${o.id} | ${o.client} | ${o.contractId} | $${o.rate}`, 'err'));
+    log('⛔ Front-end sync BLOCKED. Escalating to human operator.', 'warn');
+
+    setAlert(`
+      <strong>⛔ ESCALATION REPORT — HUMAN OPERATOR REQUIRED</strong><br><br>
+      <strong>Issue:</strong> ${orphans.length} orphaned margin tier record(s) detected for inactive contracts.<br>
+      <strong>Risk:</strong> If synced to front-end, traders see margin requirements for non-existent contracts.<br>
+      This is the exact production bug this pipeline was designed to catch.<br><br>
+      <strong>Affected:</strong> ${[...new Set(orphans.map(o=>o.contractId))].join(', ')}<br>
+      <strong>Action:</strong> Manual cleanup required before re-run.
+    `, 'danger');
+
+    ['s3','s4','s5'].forEach(k => setStep(k, 'halted'));
+    setWorkflowStatus('HALTED');
+    setSummary({ deactivated: 0, tiersCleaned: 0, active: contracts.filter(c=>c.status==='active').length, sync: '❌ BLOCKED' });
+    running = false; setButtons(false);
+    return;
+  }
+
+  setStep('s2', 'completed', { type: 'ok', msg: 'PASS: No orphaned records. Safe to proceed.' });
+  log('✅ Validation passed. No orphaned records.', 'ok');
+
+  // STEP 3
+  await sleep(600);
+  setStep('s3', 'running');
+  log('Step 3: Sending expiry notification to trading desk...', 'info');
+  await sleep(700);
+  setStep('s3', 'completed', { type: 'info', msg: `Email sent → trading-desk@optiver.com (${expiring.length} contracts)` });
+  log(`✅ Email sent: ${expiring.map(c=>c.id).join(', ')} require roll or close`, 'ok');
+
+  // STEP 4
+  await sleep(600);
+  setStep('s4', 'running');
+  log('Step 4: Deactivating contracts + cascade-cleaning margin tiers...', 'info');
+  await sleep(500);
+
+  let totalTiersCleaned = 0;
+  for (const contract of expiring) {
+    await sleep(300);
+    const contractTiers = tiers.filter(t => t.contractId === contract.id);
+    totalTiersCleaned += contractTiers.length;
+
+    // Animate tier deletion
+    contractTiers.forEach(t => {
+      const el = document.getElementById(`tier-${t.id}`);
+      if (el) el.classList.add('deleting');
+    });
+    await sleep(450);
+
+    // Remove from state
+    tiers = tiers.filter(t => t.contractId !== contract.id);
+    contracts.find(c => c.id === contract.id).status = 'inactive';
+
+    renderContracts();
+    renderTiers();
+    updateCounts();
+    log(`✅ ${contract.id}: deactivated | ${contractTiers.length} margin tier record(s) deleted`, 'ok');
+  }
+
+  setStep('s4', 'completed', { type: 'ok', msg: `Deactivated ${expiring.length} contracts, cleaned ${totalTiersCleaned} tier records.` });
+
+  // STEP 5
+  await sleep(600);
+  setStep('s5', 'running');
+  log('Step 5: Post-deactivation validation...', 'info');
+  await sleep(800);
+
+  const stale = tiers.filter(t => {
+    const c = contracts.find(x => x.id === t.contractId);
+    return c && c.status === 'inactive';
+  });
+
+  if (stale.length > 0) {
+    setStep('s5', 'failed', { type: 'err', msg: `FAIL: ${stale.length} stale record(s) remain. Sync blocked.` });
+    log('❌ Post-deactivation check FAILED. Sync blocked.', 'err');
+    setWorkflowStatus('FAILED');
+    running = false; setButtons(false);
+    return;
+  }
+
+  setStep('s5', 'completed', { type: 'ok', msg: 'PASS: All clean. Front-end sync approved.' });
+  log('✅ Post-deactivation check passed. All records clean.', 'ok');
+  log('✅ Front-end sync APPROVED.', 'ok');
+  log('─── Workflow complete. Awaiting human sign-off. ───', 'system');
+
+  setWorkflowStatus('COMPLETE');
+  const activeCount = contracts.filter(c => c.status === 'active').length;
+  setSummary({ deactivated: expiring.length, tiersCleaned: totalTiersCleaned, active: activeCount, sync: '✅ OK' });
+  setAlert(`<strong>✅ WORKFLOW COMPLETE</strong><br>All validation checks passed. ${expiring.length} contract(s) deactivated, ${totalTiersCleaned} margin tier record(s) cleaned. Front-end sync approved. Please sign off.`, 'success');
+
+  running = false;
+  setButtons(false);
+}
+
+function setAlert(html, type) {
+  const el = document.getElementById('alertBox');
+  el.innerHTML = html;
+  el.className = 'alert' + (type ? ` show ${type}` : '');
+}
+
+function setSummary({ deactivated, tiersCleaned, active, sync }) {
+  document.getElementById('statDeactivated').textContent = deactivated;
+  document.getElementById('statTiersCleaned').textContent = tiersCleaned;
+  document.getElementById('statActive').textContent = active;
+  const el = document.getElementById('statSyncStatus');
+  el.textContent = sync.includes('OK') ? 'OK' : 'BLOCKED';
+  el.className = 'stat-val ' + (sync.includes('OK') ? 'green' : 'red');
+}
+
+function resetAll() {
+  contracts = JSON.parse(JSON.stringify(INITIAL_CONTRACTS));
+  tiers = JSON.parse(JSON.stringify(INITIAL_TIERS));
+  renderContracts();
+  renderTiers();
+  renderSteps();
+  updateCounts();
+  setAlert('', '');
+  setButtons(false);
+  document.getElementById('workflowStatus').textContent = 'IDLE';
+  document.getElementById('statDeactivated').textContent = '—';
+  document.getElementById('statTiersCleaned').textContent = '—';
+  document.getElementById('statActive').textContent = '—';
+  document.getElementById('statSyncStatus').textContent = '—';
+  document.getElementById('statSyncStatus').className = 'stat-val';
+  log('─── Reset ───', 'system');
+  running = false;
+}
+
+init();
+log('System initialized. Ready.', 'system');
+</script>
+</body>
+</html>
